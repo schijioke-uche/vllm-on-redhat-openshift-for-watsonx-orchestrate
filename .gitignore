@@ -1,0 +1,29 @@
+# Sensitive files
+*.pem
+*.key
+*.crt
+*.env   
+# Logs and temporary files
+*.log
+*.tmp
+*.bak       
+# OS generated files
+.DS_Store
+Thumbs.db       
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace     
+# Python cache files
+__pycache__/
+*.pyc       
+# Node modules
+node_modules/   
+# Build artifacts
+dist/
+build/
+*.egg-info/
+# Docker files          
+.dockerignore
+ 
