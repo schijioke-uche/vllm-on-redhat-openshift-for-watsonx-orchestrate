@@ -385,16 +385,104 @@ maybe_verify_image_arch() {
     || fail "base image ${BASE_IMAGE} is not inspectable for linux/${ARCH}."
 }
 
+dns_label_truncate() {
+  local value="${1:-}"
+  local max_len="${2:-63}"
+  local hash_input="${3:-${value}}"
+  local label hash keep
+
+  label="$(slugify "$value")"
+  [[ -n "$label" ]] || label="x"
+
+  if (( max_len < 1 )); then
+    fail "invalid DNS label max length: ${max_len}"
+  fi
+
+  if (( ${#label} <= max_len )); then
+    printf '%s' "$label"
+    return 0
+  fi
+
+  if (( max_len <= 9 )); then
+    label="${label:0:${max_len}}"
+    label="$(printf '%s' "$label" | sed -E 's#-+$##')"
+    [[ -n "$label" ]] || label="x"
+    printf '%s' "$label"
+    return 0
+  fi
+
+  hash="$(short_hash "$hash_input")"
+  keep=$(( max_len - 9 ))
+  label="${label:0:${keep}}-${hash}"
+  label="$(printf '%s' "$label" | sed -E 's#-+$##')"
+  [[ -n "$label" ]] || label="x"
+  printf '%s' "$label"
+}
+
+route_trimmer() {
+  # Normalize the deployment/route base name so OpenShift-generated objects stay short:
+  #   default Route host first label: <route-name>-<namespace> <= 63 chars
+  #   generated Pod name:            <deployment-name>-<generated-suffix> remains compact
+  # The namespace is security-driven and is expected to come from VLLM_MODEL_ID.
+  local model_id="${1:-${MODEL_ID:-}}"
+  local namespace="${2:-${NAMESPACE:-}}"
+  local arch="${3:-${ARCH:-}}"
+  local ns_label model_label desired_app max_app route_budget pod_budget original_app host_first host_rest trimmed_first
+
+  ns_label="$(dns_label_truncate "$namespace" "${NAMESPACE_MAX_LEN:-14}" "$model_id-$namespace")"
+  model_label="${VLLM_MODEL_ID:-}"
+  if [[ -z "$model_label" || "$model_label" == "unset" ]]; then
+    model_label="$model_id"
+  fi
+  model_label="$(dns_label_truncate "$model_label" "${MODEL_ROUTE_TOKEN_MAX:-24}" "$model_id")"
+
+  NAMESPACE="$ns_label"
+  export NAMESPACE
+
+  desired_app="vllm-${model_label}-${arch}"
+
+  # OpenShift default route hosts are commonly rendered as
+  # <route-name>-<namespace>.<apps-domain>. Keep that first DNS label <= 63.
+  route_budget=$(( 63 - ${#NAMESPACE} - 1 ))
+  if (( route_budget < 12 )); then
+    fail "namespace ${NAMESPACE} is too long to produce a valid OpenShift Route host label."
+  fi
+
+  # Keep the Deployment name intentionally shorter than the Kubernetes DNS-label limit,
+  # because generated pod names append controller/random suffixes.
+  pod_budget="${POD_APP_NAME_MAX:-40}"
+  max_app=63
+  (( route_budget < max_app )) && max_app=$route_budget
+  (( pod_budget < max_app )) && max_app=$pod_budget
+
+  original_app="${APP_NAME:-$desired_app}"
+  APP_NAME="$(dns_label_truncate "$original_app" "$max_app" "$model_id-$namespace-$arch")"
+  export APP_NAME
+
+  # If a custom ROUTE_HOST is supplied, protect it from the same first-label failure.
+  if [[ -n "${ROUTE_HOST:-}" ]]; then
+    host_first="${ROUTE_HOST%%.*}"
+    if [[ "$ROUTE_HOST" == *.* ]]; then
+      host_rest=".${ROUTE_HOST#*.}"
+    else
+      host_rest=""
+    fi
+    trimmed_first="$(dns_label_truncate "$host_first" 63 "$model_id-$namespace-$arch-route-host")"
+    ROUTE_HOST="${trimmed_first}${host_rest}"
+    export ROUTE_HOST
+  fi
+
+  ROUTE_HOST_LABEL="${APP_NAME}-${NAMESPACE}"
+  if (( ${#ROUTE_HOST_LABEL} > 63 )); then
+    fail "internal route_trimmer error: ${ROUTE_HOST_LABEL} is longer than 63 characters."
+  fi
+  export ROUTE_HOST_LABEL
+}
+
 prepare_names() {
-  local model_slug model_hash base_slug
-  model_slug="$(slugify "$MODEL_ID")"
-  model_hash="$(short_hash "$MODEL_ID")"
-  [[ -n "$model_slug" ]] || model_slug="model"
-  base_slug="${model_slug:0:32}-${model_hash}"
-  APP_NAME="${APP_NAME:-vllm-${base_slug}-${ARCH}}"
-  APP_NAME="$(printf '%s' "$APP_NAME" | cut -c1-63 | sed -E 's#-+$##')"
-  NAMESPACE="${NAMESPACE:-${base_slug}}"
-  NAMESPACE="$(printf '%s' "$NAMESPACE" | cut -c1-63 | sed -E 's#-+$##')"
+  [[ -n "${VLLM_MODEL_ID:-}" && "${VLLM_MODEL_ID}" != "unset" ]] || vllm_models "$MODEL_ID"
+  NAMESPACE="${NAMESPACE:-${VLLM_MODEL_ID}}"
+  route_trimmer "$MODEL_ID" "$NAMESPACE" "$ARCH"
   SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-$(basename "$MODEL_ID")}" 
   [[ -n "$SERVED_MODEL_NAME" ]] || SERVED_MODEL_NAME="model"
 }
@@ -660,8 +748,9 @@ EOF_RUNTIME
 
   if [[ -n "${ROUTE_HOST:-}" ]]; then
     awk -v host="${ROUTE_HOST}" '
+      $0 == "kind: Route" { in_route=1 }
       { print }
-      /^spec:/ && !done { print "  host: " host; done=1 }
+      in_route && /^spec:/ && !done { print "  host: " host; done=1; in_route=0 }
     ' "${MANIFEST_DIR}/02-runtime.yaml" > "${MANIFEST_DIR}/02-runtime.yaml.tmp"
     mv "${MANIFEST_DIR}/02-runtime.yaml.tmp" "${MANIFEST_DIR}/02-runtime.yaml"
   fi
@@ -752,13 +841,11 @@ main() {
     export NAMESPACE
   }
 
-  if [[ -n "${MODEL_ID:-}" ]]; then
-    :
-  else
+  if [[ -z "${MODEL_ID:-}" ]]; then
     select_model
-    vllm_models
-    set_namespace
   fi
+  vllm_models "$MODEL_ID"
+  set_namespace
 
   if [[ -n "${ARCH:-}" ]]; then
     set_architecture_defaults "$ARCH"
@@ -782,6 +869,9 @@ main() {
   log "Selected architecture: ${ARCH} (${ARCH_LABEL})"
   log "Selected Dockerfile: ${DOCKERFILE_NAME}"
   log "Selected base image: ${BASE_IMAGE}"
+  log "Normalized namespace: ${NAMESPACE}"
+  log "Normalized app/route/deployment name: ${APP_NAME}"
+  log "OpenShift default route first label: ${ROUTE_HOST_LABEL} (${#ROUTE_HOST_LABEL}/63)"
   log "Build context: ${BUILD_DIR}"
   log "Manifests: ${MANIFEST_DIR}"
 

@@ -1,0 +1,34 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: vllm-gpt-oss-20b-s390x
+  namespace: gpt-oss-20b
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: vllm-gpt-oss-20b-s390x
+  namespace: gpt-oss-20b
+  labels:
+    app.kubernetes.io/name: vllm-gpt-oss-20b-s390x
+    app.kubernetes.io/component: vllm-cpu
+    app.kubernetes.io/part-of: vllm-openshift
+spec:
+  runPolicy: Serial
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: s390x.Dockerfile
+      pullSecret:
+        name: rh-registry-pull
+      buildArgs:
+        - name: BASE_IMAGE
+          value: "registry.redhat.io/rhaiis/vllm-spyre-rhel9:3.3.0"
+  output:
+    to:
+      kind: ImageStreamTag
+      name: vllm-gpt-oss-20b-s390x:latest
+      
