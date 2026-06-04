@@ -1,84 +1,95 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "${TMP_DIR}"' EXIT
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OUT="${ROOT}/test-output"
+rm -rf "$OUT"
+mkdir -p "$OUT"
 
-cp -a "${ROOT_DIR}/." "${TMP_DIR}/"
-cd "${TMP_DIR}"
+pass() { printf 'PASS: %s\n' "$*"; }
+fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
-cat > .env <<'EOF'
-OCP_URL=https://api.test-cluster.example.com:6443
-OCP_TOKEN=sha256~test-token
-HF_TOKEN=hf_test_token
-EOF
+printf '[1/11] required file validation\n'
+for f in amd64.Dockerfile arm64.Dockerfile ppc64le.Dockerfile s390x.Dockerfile deploy-vllm-openshift.sh IMAGE_MATRIX.md README.md .env.example; do
+  [[ -f "$ROOT/$f" ]] || fail "missing $f"
+done
+pass 'all required files exist with exact architecture Dockerfile names'
 
-echo '[1/6] Bash syntax validation'
-bash -n ./deploy-vllm-cpu-openshift.sh
+printf '\n[2/11] bash syntax validation\n'
+bash -n "$ROOT/deploy-vllm-openshift.sh"
+pass 'deploy script syntax is valid'
 
-echo '[2/6] Dockerfile required instruction validation'
-python3 - <<'PY'
-from pathlib import Path
-s = Path('Dockerfile').read_text()
-required = [
-    'FROM ${BASE_IMAGE}',
-    'VLLM_TARGET_DEVICE=cpu',
-    'python -m pip install --upgrade "vllm[cpu]"',
-    'EXPOSE 8000',
-    'ENTRYPOINT ["python", "-m", "vllm.entrypoints.openai.api_server"]',
-]
-missing = [item for item in required if item not in s]
-if missing:
-    raise SystemExit(f'Missing Dockerfile entries: {missing}')
-print('Dockerfile check PASS')
-PY
+printf '\n[3/11] Dockerfile anti-regression validation\n'
+for f in amd64.Dockerfile arm64.Dockerfile ppc64le.Dockerfile s390x.Dockerfile; do
+  grep -q '^FROM ${BASE_IMAGE}' "$ROOT/$f" || fail "$f does not use FROM \\${BASE_IMAGE}"
+  grep -q '^ARG BASE_IMAGE=' "$ROOT/$f" || fail "$f is missing ARG BASE_IMAGE"
+done
+! grep -R 'pip install.*vllm\[cpu\]' "$ROOT/s390x.Dockerfile" >/dev/null || fail 's390x.Dockerfile contains stale pip install vllm[cpu] path'
+! grep -R 'ai/gpt-oss-vllm' "$ROOT"/*.Dockerfile >/dev/null || fail 'a Dockerfile contains invalid Docker Model Runner artifact image'
+pass 'Dockerfiles use architecture base args and avoid stale s390x build path'
 
-echo '[3/6] x86 dry-run deployment generation'
-printf 'ibm-granite/granite-3.2-2b-instruct\n1\n' | \
-  DRY_RUN=1 NAMESPACE=test-x86 APP_NAME=vllm-cpu-test ROUTE_HOST=test-x86.apps.example.com \
-  ./deploy-vllm-cpu-openshift.sh > x86.log
+run_dry() {
+  local model="$1" arch="$2" work="$3"
+  DRY_RUN=1 MODEL_ID="$model" ARCH="$arch" WORK_DIR="$work" "$ROOT/deploy-vllm-openshift.sh" >"$work.log" 2>&1
+}
 
-grep -q 'oc new-build --name=vllm-cpu-test --binary --strategy=docker' x86.log
-grep -q 'Dockerfile copied to ./vllm-cpu-ocp-build/Dockerfile' x86.log
-grep -q 'kubernetes.io/arch: amd64' x86.log
-grep -q 'host: test-x86.apps.example.com' x86.log
-cmp -s Dockerfile vllm-cpu-ocp-build/Dockerfile
+printf '\n[4/11] dry-run amd64 generation\n'
+run_dry 'ibm-granite/granite-3.2-2b-instruct' amd64 "$OUT/amd64"
+grep -q 'Selected Dockerfile: amd64.Dockerfile' "$OUT/amd64/context/BUILD_SELECTION.txt" || fail 'amd64 selected Dockerfile mismatch'
+grep -q 'dockerfilePath: amd64.Dockerfile' "$OUT/amd64/manifests/01-build.yaml" || fail 'amd64 BuildConfig dockerfilePath mismatch'
+grep -q 'docker.io/vllm/vllm-openai-cpu:v0.22.0-x86_64' "$OUT/amd64/context/BUILD_SELECTION.txt" || fail 'amd64 base image mismatch'
+pass 'amd64 dry-run generated expected Dockerfile and base image'
 
-echo '[4/6] x86 generated YAML parse validation'
-python3 - <<'PY'
-from pathlib import Path
-import yaml
-objs = list(yaml.safe_load_all(Path('vllm-cpu-ocp-build/openshift-vllm-cpu.yaml').read_text()))
-kinds = [o.get('kind') for o in objs if o]
-expected = ['PersistentVolumeClaim', 'Secret', 'Deployment', 'Service', 'Route']
-if kinds != expected:
-    raise SystemExit(f'Unexpected OpenShift object sequence: {kinds}')
-dep = objs[2]
-assert dep['spec']['template']['spec']['nodeSelector']['kubernetes.io/arch'] == 'amd64'
-env = {item['name']: item for item in dep['spec']['template']['spec']['containers'][0]['env']}
-assert env['VLLM_TARGET_DEVICE']['value'] == 'cpu'
-print('x86 YAML check PASS')
-PY
+printf '\n[5/11] dry-run arm64 generation\n'
+run_dry 'ibm-granite/granite-3.2-2b-instruct' arm64 "$OUT/arm64"
+grep -q 'Selected Dockerfile: arm64.Dockerfile' "$OUT/arm64/context/BUILD_SELECTION.txt" || fail 'arm64 selected Dockerfile mismatch'
+grep -q 'dockerfilePath: arm64.Dockerfile' "$OUT/arm64/manifests/01-build.yaml" || fail 'arm64 BuildConfig dockerfilePath mismatch'
+grep -q 'docker.io/vllm/vllm-openai-cpu:v0.22.0-arm64' "$OUT/arm64/context/BUILD_SELECTION.txt" || fail 'arm64 base image mismatch'
+pass 'arm64 dry-run generated expected Dockerfile and base image'
 
-echo '[5/6] s390x dry-run deployment generation'
-printf 'unsloth/gpt-oss-20b\n2\n' | \
-  DRY_RUN=1 NAMESPACE=test-s390x APP_NAME=vllm-cpu-test ROUTE_HOST=test-s390x.apps.example.com \
-  ./deploy-vllm-cpu-openshift.sh > s390x.log
+printf '\n[6/11] dry-run ppc64le generation\n'
+run_dry 'RedHatAI/Meta-Llama-3.1-8B-quantized.w8a8' ppc64le "$OUT/ppc64le"
+grep -q 'Selected Dockerfile: ppc64le.Dockerfile' "$OUT/ppc64le/context/BUILD_SELECTION.txt" || fail 'ppc64le selected Dockerfile mismatch'
+grep -q 'dockerfilePath: ppc64le.Dockerfile' "$OUT/ppc64le/manifests/01-build.yaml" || fail 'ppc64le BuildConfig dockerfilePath mismatch'
+grep -q 'registry.redhat.io/rhaiis/vllm-spyre-rhel9:3.3.0' "$OUT/ppc64le/context/BUILD_SELECTION.txt" || fail 'ppc64le base image mismatch'
+pass 'ppc64le dry-run generated expected Dockerfile and base image'
 
-grep -q 'kubernetes.io/arch: s390x' s390x.log
-grep -q 'VXE required; IBM Z14 or newer' s390x.log
-grep -q 'host: test-s390x.apps.example.com' s390x.log
+printf '\n[7/11] dry-run s390x GPT-OSS generation\n'
+run_dry 'unsloth/gpt-oss-20b' s390x "$OUT/s390x"
+grep -q 'Selected Dockerfile: s390x.Dockerfile' "$OUT/s390x/context/BUILD_SELECTION.txt" || fail 's390x selected Dockerfile mismatch'
+grep -q 'dockerfilePath: s390x.Dockerfile' "$OUT/s390x/manifests/01-build.yaml" || fail 's390x BuildConfig dockerfilePath mismatch'
+grep -q 'registry.redhat.io/rhaiis/vllm-spyre-rhel9:3.3.0' "$OUT/s390x/context/BUILD_SELECTION.txt" || fail 's390x base image mismatch'
+! grep -R 'ai/gpt-oss-vllm' "$OUT/s390x" >/dev/null || fail 's390x GPT-OSS dry-run selected invalid Docker Model Runner artifact image'
+pass 's390x GPT-OSS dry-run uses s390x.Dockerfile and Red Hat architecture image'
 
-echo '[6/6] s390x generated YAML parse validation'
-python3 - <<'PY'
-from pathlib import Path
-import yaml
-objs = list(yaml.safe_load_all(Path('vllm-cpu-ocp-build/openshift-vllm-cpu.yaml').read_text()))
-dep = objs[2]
-assert dep['spec']['template']['spec']['nodeSelector']['kubernetes.io/arch'] == 's390x'
-assert dep['spec']['template']['metadata']['annotations']['cpu.openshift.io/isa-note'] == 'VXE required; IBM Z14 or newer'
-print('s390x YAML check PASS')
-PY
+printf '\n[8/11] option-5 style custom model path through environment\n'
+run_dry 'Qwen/Qwen3-1.7B' arm64 "$OUT/custom-arm64"
+grep -q 'Model ID: Qwen/Qwen3-1.7B' "$OUT/custom-arm64/context/BUILD_SELECTION.txt" || fail 'custom model not preserved'
+grep -q 'Selected Dockerfile: arm64.Dockerfile' "$OUT/custom-arm64/context/BUILD_SELECTION.txt" || fail 'custom model arch Dockerfile mismatch'
+pass 'custom model ID path works in dry-run'
 
-echo 'ALL LOCAL TESTS PASSED'
+printf '\n[9/11] invalid Docker Model Runner artifact override is rejected\n'
+if DRY_RUN=1 MODEL_ID='unsloth/gpt-oss-20b' ARCH=s390x BASE_IMAGE_OVERRIDE='ai/gpt-oss-vllm' WORK_DIR="$OUT/bad" "$ROOT/deploy-vllm-openshift.sh" >"$OUT/bad.log" 2>&1; then
+  fail 'BASE_IMAGE_OVERRIDE=ai/gpt-oss-vllm should have failed'
+fi
+grep -q 'Docker Model Runner model artifact' "$OUT/bad.log" || fail 'bad override error message missing'
+pass 'invalid ai/gpt-oss-vllm override fails before OpenShift build generation'
+
+printf '\n[10/11] quit path exits cleanly\n'
+if printf 'q\n' | DRY_RUN=1 "$ROOT/deploy-vllm-openshift.sh" >"$OUT/quit.log" 2>&1; then
+  pass 'q selection exits with code 0'
+else
+  fail 'q selection did not exit 0'
+fi
+
+printf '\n[11/11] generated manifest resource checks\n'
+for arch in amd64 arm64 ppc64le s390x custom-arm64; do
+  grep -q '^kind: BuildConfig' "$OUT/$arch/manifests/01-build.yaml" || fail "$arch missing BuildConfig"
+  grep -q '^kind: Deployment' "$OUT/$arch/manifests/02-runtime.yaml" || fail "$arch missing Deployment"
+  grep -q '^kind: Service' "$OUT/$arch/manifests/02-runtime.yaml" || fail "$arch missing Service"
+  grep -q '^kind: Route' "$OUT/$arch/manifests/02-runtime.yaml" || fail "$arch missing Route"
+  grep -q 'image-registry.openshift-image-registry.svc:5000' "$OUT/$arch/manifests/02-runtime.yaml" || fail "$arch runtime image is not internal OpenShift image registry"
+done
+pass 'generated OpenShift manifests include required resources'
+
+printf '\nALL LOCAL TESTS PASSED\n'

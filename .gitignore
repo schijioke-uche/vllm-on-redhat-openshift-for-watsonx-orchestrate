@@ -2,7 +2,9 @@
 *.pem
 *.key
 *.crt
-*.env   
+*.env 
+.secret/
+.env*  
 # Logs and temporary files
 *.log
 *.tmp
@@ -26,4 +28,4 @@ build/
 *.egg-info/
 # Docker files          
 .dockerignore
- 
+test-output 
