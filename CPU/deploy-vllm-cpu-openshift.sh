@@ -67,9 +67,9 @@ model_examples() {
 | #  | Example model ID                                              | Type               | CPU guidance                |
 +----+---------------------------------------------------------------+--------------------+-----------------------------+
 | 1  | ibm-granite/granite-3.2-2b-instruct                           | Text               | Good small CPU smoke test   |
-| 2  | unsloth/gpt-oss-20b                                            | Text               | GPT-OSS CPU-supported model |
-| 3  | RedHatAI/Meta-Llama-3.1-8B-quantized.w8a8                       | Text quantized     | Practical CPU quantized     |
-| 4  | RedHatAI/DeepSeek-R1-Distill-Llama-70B-quantized.w8a8            | Text quantized     | Very large CPU deployment   |
+| 2  | unsloth/gpt-oss-20b                                           | Text               | GPT-OSS CPU-supported model |
+| 3  | RedHatAI/Meta-Llama-3.1-8B-quantized.w8a8                     | Text quantized     | Practical CPU quantized     |
+| 4  | RedHatAI/DeepSeek-R1-Distill-Llama-70B-quantized.w8a8         | Text quantized     | Very large CPU deployment   |
 +----+---------------------------------------------------------------+--------------------+-----------------------------+
 TABLE
 }
