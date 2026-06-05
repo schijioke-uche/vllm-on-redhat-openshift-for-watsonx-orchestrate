@@ -1192,7 +1192,7 @@ apply_and_build() {
   route_host="$(oc -n "$NAMESPACE" get route "$APP_NAME" -o jsonpath='{.spec.host}')"
   printf '\nDeployment complete.\n'
   printf 'VLLM base URL: https://%s/v1\n' "$route_host"
-  printf 'Model ID: %s\n' "$APP_NAME"
+  printf 'Model ID: %s\n' "$SERVED_MODEL_NAME"
   printf 'Model API token key: %s\n' "$API_KEY"
   echo "____________________________________________________________________________________________"
 }
