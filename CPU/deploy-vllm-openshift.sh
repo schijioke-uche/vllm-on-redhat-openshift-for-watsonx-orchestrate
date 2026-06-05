@@ -724,14 +724,14 @@ ocp_scheduling_fit_probe() {
   printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
   printf '%s' "$rows"
   printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
-  printf '%bScheduler note:%s this table uses allocatable resources minus existing Pod resource requests. Kubernetes schedules Pods from requests, not from live usage alone.\n' "$c_dim" "$c_reset"
+  printf '%bScheduler note:%s This table uses allocatable resources minus existing Pod resource requests.\n' "$c_dim" "$c_reset"
 
   if (( fit_count > 0 )); then
-    printf '%bResult:%s at least one %s node can satisfy CPU_REQUEST=%s and MEMORY_REQUEST=%s.\n\n' "$c_green" "$c_reset" "$NODE_ARCH" "$CPU_REQUEST" "$MEMORY_REQUEST"
+    printf '%bResult:%s At least one %s node can satisfy CPU_REQUEST=%s and MEMORY_REQUEST=%s for VLLM hosting on this OpenShift cluster.\n\n' "$c_green" "$c_reset" "$NODE_ARCH" "$CPU_REQUEST" "$MEMORY_REQUEST"
     return 0
   fi
 
-  printf '%bResult:%s no %s node can currently satisfy CPU_REQUEST=%s and MEMORY_REQUEST=%s.\n' "$c_red" "$c_reset" "$NODE_ARCH" "$CPU_REQUEST" "$MEMORY_REQUEST"
+  printf '%bResult:%s No %s node can currently satisfy CPU_REQUEST=%s and MEMORY_REQUEST=%s for VLLM hosting on this OpenShift cluster.\n' "$c_red" "$c_reset" "$NODE_ARCH" "$CPU_REQUEST" "$MEMORY_REQUEST"
   printf 'Set smaller requests only for smoke testing, for example CPU_REQUEST=1 MEMORY_REQUEST=4Gi, or add/free a larger %s node.\n\n' "$NODE_ARCH"
   return 2
 }
@@ -1167,19 +1167,31 @@ oc_login_and_project() {
   fi
 }
 
+get_vllm_model_credentials() {
+  local secret_name="${SECRET}"
+  local key_name="${SECRET_KEY}"
+  if oc -n "$NAMESPACE" get secret "$secret_name" >/dev/null 2>&1; then
+    oc -n "$NAMESPACE" get secret "$secret_name" -o jsonpath="{.data.${key_name}}" 2>/dev/null | base64 -d || true
+  fi
+}
+
 apply_and_build() {
   oc apply -f "${MANIFEST_DIR}/01-build.yaml"
   log "Starting OpenShift binary build from ${BUILD_DIR} using ${DOCKERFILE_NAME}."
   oc start-build "$APP_NAME" -n "$NAMESPACE" --from-dir="$BUILD_DIR" --follow --wait
   oc apply -f "${MANIFEST_DIR}/02-runtime.yaml"
   oc -n "$NAMESPACE" rollout status "deployment/${APP_NAME}" --timeout="${ROLLOUT_TIMEOUT}"
-
+  
+  echo
+  echo "____________________________________________________________________________________________"
   local route_host
+  API_KEY="$(get_vllm_model_credentials)"
   route_host="$(oc -n "$NAMESPACE" get route "$APP_NAME" -o jsonpath='{.spec.host}')"
   printf '\nDeployment complete.\n'
-  printf 'OpenAI-compatible base URL: https://%s/v1\n' "$route_host"
-  printf 'Model name for requests: %s\n' "$SERVED_MODEL_NAME"
-  printf 'API key secret: %s-secrets / key %s\n' "$APP_NAME" "$SECRET_KEY"
+  printf 'VLLM base URL: https://%s/v1\n' "$route_host"
+  printf 'Model ID: %s\n' "$SERVED_MODEL_NAME"
+  printf 'Model API token key: %s\n' "$API_KEY"
+  echo "____________________________________________________________________________________________"
 }
 
 main() {
