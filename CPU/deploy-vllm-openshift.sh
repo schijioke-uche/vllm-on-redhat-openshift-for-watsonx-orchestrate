@@ -1167,7 +1167,12 @@ oc_login_and_project() {
   fi
 }
 
+: "${APP_NAME:?APP_NAME must be set before SECRET can be derived}"
+: "${NAMESPACE:?NAMESPACE must be set before retrieving model credentials}"
+
 get_vllm_model_credentials() {
+  SECRET="${APP_NAME}-secrets"
+  SECRET_KEY="${APP_NAME}-vllm-api-key"
   local secret_name="${SECRET}"
   local key_name="${SECRET_KEY}"
   if oc -n "$NAMESPACE" get secret "$secret_name" >/dev/null 2>&1; then
@@ -1194,6 +1199,8 @@ apply_and_build() {
   echo "____________________________________________________________________________________________"
 }
 
+
+####################################################################################################
 main() {
   load_env
 
