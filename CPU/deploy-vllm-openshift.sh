@@ -1167,8 +1167,6 @@ oc_login_and_project() {
   fi
 }
 
-: "${APP_NAME:?APP_NAME must be set before SECRET can be derived}"
-: "${NAMESPACE:?NAMESPACE must be set before retrieving model credentials}"
 
 get_vllm_model_credentials() {
   SECRET="${APP_NAME}-secrets"
