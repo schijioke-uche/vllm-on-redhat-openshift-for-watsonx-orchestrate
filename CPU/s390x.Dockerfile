@@ -1,5 +1,16 @@
+#.................................................................................
+# @Author:  Dr. Jeffrey Chijioke-Uche, IBM Computer Scientist
+# @Purpose: VLLM on Red Hat OpenShift CPU deployment
+# @Use: Deploy vLLM on Red Hat OpenShift with CPU support, using a selection of compatible models and architectures. This script guides users through selecting a model, choosing the appropriate OpenShift architecture, and deploying vLLM with the selected configuration.
+# @File: s390x.Dockerfile (CPU only supported)
+# @Copyright: All Rights Reserved (c) 2026
+# @Credit: Dr. Jeffrey Chijioke-Uche - Copyright 2026 & Licensed
+# @CodeID: CPU-633679964-VLLM-OPENSHIFT-s390x
+#...............................................................................
 # s390x / IBM Z OpenShift vLLM wrapper.
 # Default uses Red Hat AI Inference Server Spyre image instead of upstream source-build, avoiding the long fragile PyArrow/torchvision source-build path.
+# Default uses Red Hat AI Inference Server Spyre image instead of upstream source-build, avoiding the long fragile PyArrow/torchvision source-build path.
+
 ARG BASE_IMAGE=registry.redhat.io/rhaiis/vllm-spyre-rhel9:3.3.0
 FROM ${BASE_IMAGE}
 

@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+#.................................................................................
+# @Author:  Dr. Jeffrey Chijioke-Uche, IBM Computer Scientist
+# @Purpose: VLLM on Red Hat OpenShift CPU deployment
+# @Use: Deploy vLLM on Red Hat OpenShift with CPU support, using a selection of compatible models and architectures. This script guides users through selecting a model, choosing the appropriate OpenShift architecture, and deploying vLLM with the selected configuration.
+# @File: deploy-vllm-openshift.sh (CPU only supported)
+# @Copyright: All Rights Reserved (c) 2026
+# @Credit: Dr. Jeffrey Chijioke-Uche - Copyright 2026 & Licensed
+# @CodeID: CPU-633679964-VLLM-OPENSHIFT
+#...............................................................................
+
 
 # @Code ID: CPU-633679964-VLLM-OPENSHIFT
-# @Version: 10.1
+# @Version: 10.2.1
 
 
 SCRIPT_NAME="deploy-vllm-openshift.sh"
@@ -826,6 +836,8 @@ prepare_names() {
   route_trimmer "$MODEL_ID" "$NAMESPACE" "$ARCH"
   SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-$(basename "$MODEL_ID")}" 
   [[ -n "$SERVED_MODEL_NAME" ]] || SERVED_MODEL_NAME="model"
+  SECRET_KEY="${APP_NAME}-vllm-api-key"
+  export SECRET_KEY
 }
 
 write_build_context() {
@@ -932,7 +944,7 @@ metadata:
     app.kubernetes.io/name: ${APP_NAME}
 type: Opaque
 stringData:
-  vllm-api-key: ${api_key_q}
+  ${SECRET_KEY}: ${api_key_q}
   hf-token: ${hf_token_q}
 ---
 apiVersion: apps/v1
@@ -1020,7 +1032,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: ${APP_NAME}-secrets
-                  key: vllm-api-key
+                  key: ${SECRET_KEY}
             - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -1167,12 +1179,11 @@ apply_and_build() {
   printf '\nDeployment complete.\n'
   printf 'OpenAI-compatible base URL: https://%s/v1\n' "$route_host"
   printf 'Model name for requests: %s\n' "$SERVED_MODEL_NAME"
-  printf 'API key secret: %s-secrets / key vllm-api-key\n' "$APP_NAME"
+  printf 'API key secret: %s-secrets / key %s\n' "$APP_NAME" "$SECRET_KEY"
 }
 
 main() {
   load_env
-  redhat_registry_login
 
   # Runtime defaults. Override in .env when needed.
   REPLICAS="${REPLICAS:-1}"
@@ -1199,6 +1210,7 @@ main() {
 
   if [[ -z "${MODEL_ID:-}" ]]; then
     select_model
+    redhat_registry_login
   fi
   vllm_models "$MODEL_ID"
   set_namespace
@@ -1227,6 +1239,7 @@ main() {
   log "Selected base image: ${BASE_IMAGE}"
   log "Normalized namespace: ${NAMESPACE}"
   log "Normalized app/route/deployment name: ${APP_NAME}"
+  log "API key secret key: ${SECRET_KEY}"
   log "OpenShift default route first label: ${ROUTE_HOST_LABEL} (${#ROUTE_HOST_LABEL}/63)"
   log "Build context: ${BUILD_DIR}"
   log "Manifests: ${MANIFEST_DIR}"

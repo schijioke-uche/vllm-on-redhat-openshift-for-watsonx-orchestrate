@@ -1,5 +1,15 @@
+#.................................................................................
+# @Author:  Dr. Jeffrey Chijioke-Uche, IBM Computer Scientist
+# @Purpose: VLLM on Red Hat OpenShift CPU deployment
+# @Use: Deploy vLLM on Red Hat OpenShift with CPU support, using a selection of compatible models and architectures. This script guides users through selecting a model, choosing the appropriate OpenShift architecture, and deploying vLLM with the selected configuration.
+# @File: ppc64le.Dockerfile (CPU only supported)
+# @Copyright: All Rights Reserved (c) 2026
+# @Credit: Dr. Jeffrey Chijioke-Uche - Copyright 2026 & Licensed
+# @CodeID: CPU-633679964-VLLM-OPENSHIFT-ppc64le
+#...............................................................................
 # ppc64le / IBM Power little-endian OpenShift vLLM wrapper.
 # Default uses Red Hat AI Inference Server Spyre image because upstream vLLM CPU Docker images do not publish ppc64le CPU tags.
+
 ARG BASE_IMAGE=registry.redhat.io/rhaiis/vllm-spyre-rhel9:3.3.0
 FROM ${BASE_IMAGE}
 

@@ -1,4 +1,14 @@
-# amd64 / x86_64 OpenShift vLLM CPU wrapper
+#.................................................................................
+# @Author:  Dr. Jeffrey Chijioke-Uche, IBM Computer Scientist
+# @Purpose: VLLM on Red Hat OpenShift CPU deployment
+# @Use: Deploy vLLM on Red Hat OpenShift with CPU support, using a selection of compatible models and architectures. This script guides users through selecting a model, choosing the appropriate OpenShift architecture, and deploying vLLM with the selected configuration.
+# @File: amd64.Dockerfile (CPU only supported)
+# @Copyright: All Rights Reserved (c) 2026
+# @Credit: Dr. Jeffrey Chijioke-Uche - Copyright 2026 & Licensed
+# @CodeID: CPU-633679964-VLLM-OPENSHIFT-amd64
+#...............................................................................
+# amd64.Dockerfile for vLLM on Red Hat OpenShift CPU
+
 ARG BASE_IMAGE=vllm/vllm-openai-cpu:latest-x86_64
 FROM ${BASE_IMAGE}
 
