@@ -21,6 +21,4 @@ Local validation performed in a fresh workspace.
 
 All local syntax, dry-run, manifest, anti-regression, and packaging checks passed.
 
-## Limitation
 
-This sandbox cannot run a live OpenShift `oc start-build` or pod rollout because it has no access to your OpenShift credentials or cluster. The checks validate the generated code path and explicitly guard against the changes that broke the last export.
