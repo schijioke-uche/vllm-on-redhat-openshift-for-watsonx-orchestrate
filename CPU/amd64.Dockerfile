@@ -1,22 +1,28 @@
-# amd64.Dockerfile
-# OpenShift binary-build wrapper for vLLM CPU on x86_64 / Intel 64 / AMD64.
-# The default base image is architecture-specific and can be overridden by
-# the deployment script with the BASE_IMAGE build argument.
-ARG BASE_IMAGE=docker.io/vllm/vllm-openai-cpu:v0.22.0-x86_64
+# amd64 / x86_64 OpenShift vLLM CPU wrapper
+ARG BASE_IMAGE=vllm/vllm-openai-cpu:latest-x86_64
 FROM ${BASE_IMAGE}
 
+ARG TARGETARCH=amd64
 USER 0
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    VLLM_TARGET_DEVICE=cpu \
+ENV VLLM_TARGET_DEVICE=cpu \
     HF_HOME=/models/huggingface \
     TRANSFORMERS_CACHE=/models/huggingface \
-    VLLM_PORT=8000
+    HF_HUB_CACHE=/models/huggingface/hub \
+    HOME=/models/home \
+    XDG_CACHE_HOME=/models/cache \
+    VLLM_CACHE_ROOT=/models/cache/vllm \
+    VLLM_CONFIG_ROOT=/models/config/vllm \
+    TORCH_HOME=/models/cache/torch \
+    NUMBA_CACHE_DIR=/models/cache/numba \
+    VLLM_PORT=8000 \
+    PYTHONUNBUFFERED=1
 
-RUN mkdir -p /models/huggingface /opt/app-root/src && \
-    chgrp -R 0 /models /opt/app-root/src || true && \
-    chmod -R g=u /models /opt/app-root/src || true
+RUN set -eux; \
+    mkdir -p /models/huggingface /models/huggingface/hub /models/home /models/cache /models/cache/vllm /models/cache/vllm/modelinfos /models/cache/torch /models/cache/numba /models/config/vllm /tmp/vllm; \
+    chgrp -R 0 /models /tmp/vllm || true; \
+    chmod -R g=u /models /tmp/vllm || true; \
+    python -c "import importlib.util, sys; sys.exit('The selected BASE_IMAGE does not contain vLLM. Set BASE_IMAGE_AMD64 or BASE_IMAGE_OVERRIDE to a vLLM-capable image.') if importlib.util.find_spec('vllm') is None else None"
 
 EXPOSE 8000
 USER 1001
-ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+ENTRYPOINT ["python", "-m", "vllm.entrypoints.openai.api_server"]

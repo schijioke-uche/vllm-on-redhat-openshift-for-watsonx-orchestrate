@@ -8,9 +8,12 @@ log() { printf '[%s] %s\n' "$SCRIPT_NAME" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$SCRIPT_NAME" "$*" >&2; }
 fail() { printf '[%s] ERROR: %s\n' "$SCRIPT_NAME" "$*" >&2; exit 1; }
 
-set -a                    
-source "${SCRIPT_DIR}/../.env"
-set +a
+if [[ -f "${SCRIPT_DIR}/../.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${SCRIPT_DIR}/../.env"
+  set +a
+fi
 
 load_env() {
   local env_file="${ENV_FILE:-${SCRIPT_DIR}/../.env}"
@@ -45,9 +48,13 @@ yaml_dq() {
 
 
 redhat_registry_login() {
-  if [[ -n "${RH_REGISTRY_USERNAME:-${PUBLIC_REDHAT_REGISTRY_USER}}" && -n "${RH_REGISTRY_PASSWORD:-${PUBLIC_REDHAT_REGISTRY_PASSWORD}}" ]]; then
-    export RH_REGISTRY_USERNAME="${RH_REGISTRY_USERNAME:-${PUBLIC_REDHAT_REGISTRY_USER}}"
-    export RH_REGISTRY_PASSWORD="${RH_REGISTRY_PASSWORD:-${PUBLIC_REDHAT_REGISTRY_PASSWORD}}"
+  local default_user="${PUBLIC_REDHAT_REGISTRY_USER:-}"
+  local default_pass="${PUBLIC_REDHAT_REGISTRY_PASSWORD:-}"
+  local user="${RH_REGISTRY_USERNAME:-${default_user}}"
+  local pass="${RH_REGISTRY_PASSWORD:-${default_pass}}"
+  if [[ -n "$user" && -n "$pass" ]]; then
+    export RH_REGISTRY_USERNAME="$user"
+    export RH_REGISTRY_PASSWORD="$pass"
     docker login registry.redhat.io -u "${RH_REGISTRY_USERNAME}" -p "${RH_REGISTRY_PASSWORD}"
   fi
 }
@@ -385,6 +392,335 @@ maybe_verify_image_arch() {
     || fail "base image ${BASE_IMAGE} is not inspectable for linux/${ARCH}."
 }
 
+
+ocp_cpu_to_millicores() {
+  local value="${1:-0}"
+  awk -v q="$value" '
+    BEGIN {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", q)
+      if (q == "" || q == "<none>") { print 0; exit }
+      if (q ~ /n$/) { sub(/n$/, "", q); printf "%d\n", int((q + 999999) / 1000000); exit }
+      if (q ~ /u$/) { sub(/u$/, "", q); printf "%d\n", int((q + 999) / 1000); exit }
+      if (q ~ /m$/) { sub(/m$/, "", q); printf "%.0f\n", q; exit }
+      printf "%.0f\n", q * 1000
+    }'
+}
+
+ocp_memory_to_mib() {
+  local value="${1:-0}"
+  awk -v q="$value" '
+    BEGIN {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", q)
+      if (q == "" || q == "<none>") { print 0; exit }
+      num = q
+      unit = q
+      gsub(/[A-Za-z]+$/, "", num)
+      gsub(/^[0-9.]+/, "", unit)
+      unit_l = tolower(unit)
+
+      if (unit_l == "ki") mib = num / 1024
+      else if (unit_l == "mi") mib = num
+      else if (unit_l == "gi") mib = num * 1024
+      else if (unit_l == "ti") mib = num * 1024 * 1024
+      else if (unit_l == "pi") mib = num * 1024 * 1024 * 1024
+      else if (unit_l == "k") mib = (num * 1000) / 1048576
+      else if (unit_l == "m") mib = (num * 1000 * 1000) / 1048576
+      else if (unit_l == "g") mib = (num * 1000 * 1000 * 1000) / 1048576
+      else if (unit_l == "t") mib = (num * 1000 * 1000 * 1000 * 1000) / 1048576
+      else mib = num / 1048576
+
+      if (mib < 0) mib = 0
+      printf "%.0f\n", mib
+    }'
+}
+
+ocp_format_cpu() {
+  local millicores="${1:-0}"
+  awk -v m="$millicores" '
+    BEGIN {
+      if (m >= 1000) printf "%.2fc", m / 1000
+      else printf "%dm", m
+    }'
+}
+
+ocp_format_mib() {
+  local mib="${1:-0}"
+  awk -v m="$mib" '
+    BEGIN {
+      if (m >= 1048576) printf "%.2fTi", m / 1048576
+      else if (m >= 1024) printf "%.2fGi", m / 1024
+      else printf "%dMi", m
+    }'
+}
+
+ocp_percent() {
+  local used="${1:-0}"
+  local total="${2:-0}"
+  awk -v u="$used" -v t="$total" '
+    BEGIN {
+      if (t <= 0) printf "0.0"
+      else printf "%.1f", (u / t) * 100
+    }'
+}
+
+ocp_row_color() {
+  local cpu_pct="${1:-0}"
+  local mem_pct="${2:-0}"
+  awk -v c="$cpu_pct" -v m="$mem_pct" '
+    BEGIN {
+      p = (c > m ? c : m)
+      if (p >= 85) print "red"
+      else if (p >= 70) print "yellow"
+      else print "green"
+    }'
+}
+
+ocp_truncate() {
+  local value="${1:-}"
+  local width="${2:-40}"
+  if (( ${#value} > width )); then
+    printf '%s' "${value:0:width-3}..."
+  else
+    printf '%s' "$value"
+  fi
+}
+
+ocp_memory_and_cpu_usage_probe() {
+  command -v oc >/dev/null 2>&1 || { warn "oc CLI is required for the OpenShift CPU/RAM usage probe."; return 1; }
+  oc whoami >/dev/null 2>&1 || { warn "OpenShift login is required before running the CPU/RAM usage probe."; return 1; }
+
+  local top_output alloc_output
+  if ! top_output="$(oc adm top nodes --no-headers 2>&1)"; then
+    warn "Could not collect live node metrics with 'oc adm top nodes'. Cluster metrics may be unavailable. Output: ${top_output}"
+    return 1
+  fi
+
+  if [[ -z "${top_output//[[:space:]]/}" ]]; then
+    warn "'oc adm top nodes' returned no node metrics. Cluster metrics may be unavailable."
+    return 1
+  fi
+
+  if ! alloc_output="$(oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.allocatable.cpu}{"\t"}{.status.allocatable.memory}{"\n"}{end}' 2>&1)"; then
+    warn "Could not collect node allocatable CPU/RAM values. Output: ${alloc_output}"
+    return 1
+  fi
+
+  local c_reset='' c_bold='' c_cyan='' c_green='' c_yellow='' c_red='' c_dim=''
+  if [[ -z "${NO_COLOR:-}" && ( -t 1 || "${FORCE_COLOR:-0}" == "1" ) ]]; then
+    c_reset=$'\033[0m'
+    c_bold=$'\033[1m'
+    c_cyan=$'\033[36m'
+    c_green=$'\033[32m'
+    c_yellow=$'\033[33m'
+    c_red=$'\033[31m'
+    c_dim=$'\033[2m'
+  fi
+
+  declare -A node_cpu_alloc_m node_mem_alloc_mi
+  local node alloc_cpu alloc_mem
+  while IFS=$'\t' read -r node alloc_cpu alloc_mem; do
+    [[ -n "${node:-}" ]] || continue
+    node_cpu_alloc_m["$node"]="$(ocp_cpu_to_millicores "$alloc_cpu")"
+    node_mem_alloc_mi["$node"]="$(ocp_memory_to_mib "$alloc_mem")"
+  done <<< "$alloc_output"
+
+  local border='+------------------------------------------+------------+------------+----------+------------+------------+-------------+----------+'
+  local total_cpu_used_m=0 total_cpu_alloc_m=0 total_mem_used_mi=0 total_mem_alloc_mi=0 node_count=0
+  local rows=''
+  local cpu_used_raw cpu_top_pct mem_used_raw mem_top_pct rest
+  local cpu_used_m mem_used_mi cpu_alloc_m mem_alloc_mi mem_avail_mi cpu_pct mem_pct row_status row_color node_display
+  local cpu_used_fmt cpu_alloc_fmt mem_used_fmt mem_alloc_fmt mem_avail_fmt
+
+  while read -r node cpu_used_raw cpu_top_pct mem_used_raw mem_top_pct rest; do
+    [[ -n "${node:-}" ]] || continue
+    [[ "$node" == "NAME" ]] && continue
+
+    cpu_used_m="$(ocp_cpu_to_millicores "$cpu_used_raw")"
+    mem_used_mi="$(ocp_memory_to_mib "$mem_used_raw")"
+    cpu_alloc_m="${node_cpu_alloc_m[$node]:-0}"
+    mem_alloc_mi="${node_mem_alloc_mi[$node]:-0}"
+    mem_avail_mi=$(( mem_alloc_mi - mem_used_mi ))
+    (( mem_avail_mi < 0 )) && mem_avail_mi=0
+
+    cpu_pct="$(ocp_percent "$cpu_used_m" "$cpu_alloc_m")"
+    mem_pct="$(ocp_percent "$mem_used_mi" "$mem_alloc_mi")"
+    row_status="$(ocp_row_color "$cpu_pct" "$mem_pct")"
+    case "$row_status" in
+      red) row_color="$c_red" ;;
+      yellow) row_color="$c_yellow" ;;
+      *) row_color="$c_green" ;;
+    esac
+
+    node_display="$(ocp_truncate "$node" 40)"
+    cpu_used_fmt="$(ocp_format_cpu "$cpu_used_m")"
+    cpu_alloc_fmt="$(ocp_format_cpu "$cpu_alloc_m")"
+    mem_used_fmt="$(ocp_format_mib "$mem_used_mi")"
+    mem_alloc_fmt="$(ocp_format_mib "$mem_alloc_mi")"
+    mem_avail_fmt="$(ocp_format_mib "$mem_avail_mi")"
+
+    rows+="$(printf '%b| %-40s | %10s | %10s | %7s%% | %10s | %10s | %11s | %7s%% |%b' \
+      "$row_color" "$node_display" "$cpu_used_fmt" "$cpu_alloc_fmt" "$cpu_pct" "$mem_used_fmt" "$mem_alloc_fmt" "$mem_avail_fmt" "$mem_pct" "$c_reset")"$'\n'
+
+    total_cpu_used_m=$(( total_cpu_used_m + cpu_used_m ))
+    total_cpu_alloc_m=$(( total_cpu_alloc_m + cpu_alloc_m ))
+    total_mem_used_mi=$(( total_mem_used_mi + mem_used_mi ))
+    total_mem_alloc_mi=$(( total_mem_alloc_mi + mem_alloc_mi ))
+    node_count=$(( node_count + 1 ))
+  done <<< "$top_output"
+
+  if (( node_count == 0 )); then
+    warn "No usable node rows were returned by 'oc adm top nodes'."
+    return 1
+  fi
+
+  local total_mem_avail_mi total_cpu_pct total_mem_pct total_color_status total_color
+  total_mem_avail_mi=$(( total_mem_alloc_mi - total_mem_used_mi ))
+  (( total_mem_avail_mi < 0 )) && total_mem_avail_mi=0
+  total_cpu_pct="$(ocp_percent "$total_cpu_used_m" "$total_cpu_alloc_m")"
+  total_mem_pct="$(ocp_percent "$total_mem_used_mi" "$total_mem_alloc_mi")"
+  total_color_status="$(ocp_row_color "$total_cpu_pct" "$total_mem_pct")"
+  case "$total_color_status" in
+    red) total_color="$c_red" ;;
+    yellow) total_color="$c_yellow" ;;
+    *) total_color="$c_green" ;;
+  esac
+
+  printf '\n%b%sOpenShift Cluster CPU/RAM Usage Probe%s\n' "$c_bold$c_cyan" "" "$c_reset"
+  printf '%bNodes:%s %s    %bSource:%s oc adm top nodes + node allocatable resources\n' "$c_bold" "$c_reset" "$node_count" "$c_bold" "$c_reset"
+  printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
+  printf '%b| %-40s | %10s | %10s | %8s | %10s | %10s | %11s | %8s |%b\n' "$c_bold" "Node" "CPU Used" "CPU Alloc" "CPU Used" "RAM Used" "RAM Alloc" "RAM Avail" "RAM Used" "$c_reset"
+  printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
+  printf '%b| %-40s | %10s | %10s | %7s%% | %10s | %10s | %11s | %7s%% |%b\n' \
+    "$total_color$c_bold" "CLUSTER TOTAL" "$(ocp_format_cpu "$total_cpu_used_m")" "$(ocp_format_cpu "$total_cpu_alloc_m")" "$total_cpu_pct" \
+    "$(ocp_format_mib "$total_mem_used_mi")" "$(ocp_format_mib "$total_mem_alloc_mi")" "$(ocp_format_mib "$total_mem_avail_mi")" "$total_mem_pct" "$c_reset"
+  printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
+  printf '%s' "$rows"
+  printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
+  printf '%bLegend:%s green <70%%, yellow 70-84.9%%, red >=85%%. RAM Avail = allocatable RAM - current RAM used.\n\n' "$c_dim" "$c_reset"
+}
+
+
+ocp_sum_pod_requests_for_node() {
+  local node="${1:-}"
+  local pod_output line phase requests pair cpu_req mem_req
+  local cpu_total_m=0 mem_total_mi=0 cpu_m mem_mi
+
+  [[ -n "$node" ]] || { printf '0\t0\n'; return 0; }
+
+  if ! pod_output="$(oc get pods -A --field-selector "spec.nodeName=${node}" -o jsonpath='{range .items[*]}{.status.phase}{"\t"}{range .spec.containers[*]}{.resources.requests.cpu}{"/"}{.resources.requests.memory}{" "}{end}{"\n"}{end}' 2>/dev/null)"; then
+    printf '0\t0\n'
+    return 0
+  fi
+
+  while IFS=$'\t' read -r phase requests; do
+    [[ -n "${phase:-}" ]] || continue
+    case "$phase" in
+      Succeeded|Failed) continue ;;
+    esac
+    for pair in ${requests:-}; do
+      [[ -n "$pair" ]] || continue
+      cpu_req="${pair%%/*}"
+      mem_req="${pair#*/}"
+      [[ "$cpu_req" == "$pair" ]] && mem_req=""
+      cpu_m="$(ocp_cpu_to_millicores "$cpu_req")"
+      mem_mi="$(ocp_memory_to_mib "$mem_req")"
+      cpu_total_m=$(( cpu_total_m + cpu_m ))
+      mem_total_mi=$(( mem_total_mi + mem_mi ))
+    done
+  done <<< "$pod_output"
+
+  printf '%s\t%s\n' "$cpu_total_m" "$mem_total_mi"
+}
+
+ocp_scheduling_fit_probe() {
+  command -v oc >/dev/null 2>&1 || { warn "oc CLI is required for the OpenShift scheduling fit probe."; return 1; }
+  oc whoami >/dev/null 2>&1 || { warn "OpenShift login is required before running the scheduling fit probe."; return 1; }
+
+  local required_cpu_m required_mem_mi required_cpu_fmt required_mem_fmt
+  required_cpu_m="$(ocp_cpu_to_millicores "${CPU_REQUEST}")"
+  required_mem_mi="$(ocp_memory_to_mib "${MEMORY_REQUEST}")"
+  required_cpu_fmt="$(ocp_format_cpu "$required_cpu_m")"
+  required_mem_fmt="$(ocp_format_mib "$required_mem_mi")"
+
+  local node_output
+  if ! node_output="$(oc get nodes -l "kubernetes.io/arch=${NODE_ARCH}" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.allocatable.cpu}{"\t"}{.status.allocatable.memory}{"\t"}{.spec.unschedulable}{"\n"}{end}' 2>&1)"; then
+    warn "Could not collect ${NODE_ARCH} node allocatable resources. Output: ${node_output}"
+    return 1
+  fi
+
+  if [[ -z "${node_output//[[:space:]]/}" ]]; then
+    warn "No OpenShift nodes were returned for kubernetes.io/arch=${NODE_ARCH}."
+    return 2
+  fi
+
+  local c_reset='' c_bold='' c_cyan='' c_green='' c_yellow='' c_red='' c_dim=''
+  if [[ -z "${NO_COLOR:-}" && ( -t 1 || "${FORCE_COLOR:-0}" == "1" ) ]]; then
+    c_reset=$'\033[0m'
+    c_bold=$'\033[1m'
+    c_cyan=$'\033[36m'
+    c_green=$'\033[32m'
+    c_yellow=$'\033[33m'
+    c_red=$'\033[31m'
+    c_dim=$'\033[2m'
+  fi
+
+  local border='+------------------------------------------+------------+------------+------------+------------+------------+----------+'
+  local rows='' node alloc_cpu alloc_mem unsched alloc_cpu_m alloc_mem_mi used_pair req_cpu_m req_mem_mi free_cpu_m free_mem_mi fit fit_count=0 node_count=0
+  local row_color node_display fit_text
+
+  while IFS=$'\t' read -r node alloc_cpu alloc_mem unsched; do
+    [[ -n "${node:-}" ]] || continue
+    node_count=$(( node_count + 1 ))
+    alloc_cpu_m="$(ocp_cpu_to_millicores "$alloc_cpu")"
+    alloc_mem_mi="$(ocp_memory_to_mib "$alloc_mem")"
+    used_pair="$(ocp_sum_pod_requests_for_node "$node")"
+    req_cpu_m="${used_pair%%$'\t'*}"
+    req_mem_mi="${used_pair#*$'\t'}"
+    [[ "$req_mem_mi" == "$used_pair" ]] && req_mem_mi=0
+
+    free_cpu_m=$(( alloc_cpu_m - req_cpu_m ))
+    free_mem_mi=$(( alloc_mem_mi - req_mem_mi ))
+    (( free_cpu_m < 0 )) && free_cpu_m=0
+    (( free_mem_mi < 0 )) && free_mem_mi=0
+
+    fit="no"
+    fit_text="NO"
+    row_color="$c_red"
+    if [[ "${unsched:-}" == "true" ]]; then
+      fit_text="UNSCHED"
+      row_color="$c_yellow"
+    elif (( free_cpu_m >= required_cpu_m && free_mem_mi >= required_mem_mi )); then
+      fit="yes"
+      fit_text="YES"
+      row_color="$c_green"
+      fit_count=$(( fit_count + 1 ))
+    fi
+
+    node_display="$(ocp_truncate "$node" 40)"
+    rows+="$(printf '%b| %-40s | %10s | %10s | %10s | %10s | %10s | %8s |%b' \
+      "$row_color" "$node_display" "$(ocp_format_cpu "$free_cpu_m")" "$(ocp_format_mib "$free_mem_mi")" \
+      "$required_cpu_fmt" "$required_mem_fmt" "${unsched:-false}" "$fit_text" "$c_reset")"$'\n'
+  done <<< "$node_output"
+
+  printf '\n%b%sOpenShift Request-Based Scheduling Fit Probe%s\n' "$c_bold$c_cyan" "" "$c_reset"
+  printf '%bTarget arch:%s %s    %bPod request:%s CPU=%s RAM=%s\n' "$c_bold" "$c_reset" "$NODE_ARCH" "$c_bold" "$c_reset" "$required_cpu_fmt" "$required_mem_fmt"
+  printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
+  printf '%b| %-40s | %10s | %10s | %10s | %10s | %10s | %8s |%b\n' "$c_bold" "Node" "Free CPU" "Free RAM" "Pod CPU" "Pod RAM" "Unsched" "Fits?" "$c_reset"
+  printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
+  printf '%s' "$rows"
+  printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
+  printf '%bScheduler note:%s this table uses allocatable resources minus existing Pod resource requests. Kubernetes schedules Pods from requests, not from live usage alone.\n' "$c_dim" "$c_reset"
+
+  if (( fit_count > 0 )); then
+    printf '%bResult:%s at least one %s node can satisfy CPU_REQUEST=%s and MEMORY_REQUEST=%s.\n\n' "$c_green" "$c_reset" "$NODE_ARCH" "$CPU_REQUEST" "$MEMORY_REQUEST"
+    return 0
+  fi
+
+  printf '%bResult:%s no %s node can currently satisfy CPU_REQUEST=%s and MEMORY_REQUEST=%s.\n' "$c_red" "$c_reset" "$NODE_ARCH" "$CPU_REQUEST" "$MEMORY_REQUEST"
+  printf 'Set smaller requests only for smoke testing, for example CPU_REQUEST=1 MEMORY_REQUEST=4Gi, or add/free a larger %s node.\n\n' "$NODE_ARCH"
+  return 2
+}
+
 dns_label_truncate() {
   local value="${1:-}"
   local max_len="${2:-63}"
@@ -626,6 +962,7 @@ spec:
           args:
             - |
               set -eu
+              mkdir -p /models/huggingface/hub /models/home /models/cache/vllm/modelinfos /models/cache/torch /models/cache/numba /models/config/vllm /tmp/vllm
               exec python3 -m vllm.entrypoints.openai.api_server \
                 --model "\${MODEL_ID}" \
                 --served-model-name "\${SERVED_MODEL_NAME}" \
@@ -660,6 +997,20 @@ spec:
               value: /models/huggingface
             - name: TRANSFORMERS_CACHE
               value: /models/huggingface
+            - name: HF_HUB_CACHE
+              value: /models/huggingface/hub
+            - name: HOME
+              value: /models/home
+            - name: XDG_CACHE_HOME
+              value: /models/cache
+            - name: VLLM_CACHE_ROOT
+              value: /models/cache/vllm
+            - name: VLLM_CONFIG_ROOT
+              value: /models/config/vllm
+            - name: TORCH_HOME
+              value: /models/cache/torch
+            - name: NUMBA_CACHE_DIR
+              value: /models/cache/numba
             - name: VLLM_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -881,8 +1232,22 @@ main() {
   fi
 
   oc_login_and_project
+  if [[ "${OCP_USAGE_PROBE:-1}" == "1" ]]; then
+    ocp_memory_and_cpu_usage_probe || warn "OpenShift CPU/RAM usage probe failed; continuing deployment."
+  fi
+  if [[ "${OCP_SCHEDULING_FIT_PROBE:-1}" == "1" ]]; then
+    if ! ocp_scheduling_fit_probe; then
+      if [[ "${OCP_SCHEDULING_FIT_FAIL_FAST:-1}" == "1" ]]; then
+        fail "No ${NODE_ARCH} node can currently satisfy CPU_REQUEST=${CPU_REQUEST} and MEMORY_REQUEST=${MEMORY_REQUEST}. Reduce requests for smoke testing or add/free node capacity before deployment. Set OCP_SCHEDULING_FIT_FAIL_FAST=0 to bypass this guard."
+      else
+        warn "OpenShift scheduling fit probe found no currently fitting node; continuing because OCP_SCHEDULING_FIT_FAIL_FAST=0."
+      fi
+    fi
+  fi
   create_redhat_pull_secret_if_needed
   apply_and_build
 }
 
-main "$@"
+if [[ "${VLLM_DEPLOY_SKIP_MAIN:-0}" != "1" ]]; then
+  main "$@"
+fi

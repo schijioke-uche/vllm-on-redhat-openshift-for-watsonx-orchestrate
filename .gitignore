@@ -28,3 +28,6 @@ build/
 # Docker files          
 .dockerignore
 test-output 
+
+# Build and deployment files:
+.build-vllm-*
