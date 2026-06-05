@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+
+# @Code ID: CPU-633679964-VLLM-OPENSHIFT
+# @Version: 10.1
+
+
 SCRIPT_NAME="deploy-vllm-openshift.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
