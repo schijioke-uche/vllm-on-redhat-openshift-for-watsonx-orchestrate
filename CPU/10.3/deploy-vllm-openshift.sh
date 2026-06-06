@@ -10,9 +10,9 @@ set -Eeuo pipefail
 # @Credit: Dr. Jeffrey Chijioke-Uche - Copyright 2026 & Licensed
 # @CodeID: CPU-633679964-VLLM-OPENSHIFT-10.4.2
 #...............................................................................
+
 # @Code ID: CPU-633679964-VLLM-OPENSHIFT
 # @Version: 10.4.2
-
 
 SCRIPT_NAME="deploy-vllm-openshift.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -767,21 +767,21 @@ ocp_scheduling_fit_probe() {
       "$required_cpu_fmt" "$required_mem_fmt" "${unsched:-false}" "$fit_text" "$c_reset")"$'\n'
   done <<< "$node_output"
 
-  printf '\n%b%sOpenShift Request-Based Scheduling Fit Probe%s\n' "$c_bold$c_cyan" "" "$c_reset"
+  printf '\n%b%sOpenShift Request-Based Scheduling Fit Probe:%s\n' "$c_bold$c_cyan" "" "$c_reset"
   printf '%bTarget arch:%s %s    %bPod request:%s CPU=%s RAM=%s\n' "$c_bold" "$c_reset" "$NODE_ARCH" "$c_bold" "$c_reset" "$required_cpu_fmt" "$required_mem_fmt"
   printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
   printf '%b| %-40s | %10s | %10s | %10s | %10s | %10s | %8s |%b\n' "$c_bold" "Node" "Free CPU" "Free RAM" "Pod CPU" "Pod RAM" "Unsched" "Fits?" "$c_reset"
   printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
   printf '%s' "$rows"
   printf '%b%s%b\n' "$c_cyan" "$border" "$c_reset"
-  printf '%bScheduler note:%s this table uses allocatable resources minus existing Pod resource requests. Kubernetes schedules Pods from requests, not from live usage alone.\n' "$c_dim" "$c_reset"
+  printf '%bScheduler note:%s This table uses allocatable resources minus existing Pod resource requests.\n' "$c_dim" "$c_reset"
 
   if (( fit_count > 0 )); then
-    printf '%bResult:%s at least one %s node can satisfy CPU_REQUEST=%s and MEMORY_REQUEST=%s.\n\n' "$c_green" "$c_reset" "$NODE_ARCH" "$CPU_REQUEST" "$MEMORY_REQUEST"
+    printf '%bResult:%s At least one %s node can satisfy CPU_REQUEST=%s and MEMORY_REQUEST=%s for VLLM deployment.\n\n' "$c_green" "$c_reset" "$NODE_ARCH" "$CPU_REQUEST" "$MEMORY_REQUEST"
     return 0
   fi
 
-  printf '%bResult:%s no %s node can currently satisfy CPU_REQUEST=%s and MEMORY_REQUEST=%s.\n' "$c_red" "$c_reset" "$NODE_ARCH" "$CPU_REQUEST" "$MEMORY_REQUEST"
+  printf '%bResult:%s No %s node can currently satisfy CPU_REQUEST=%s and MEMORY_REQUEST=%s for VLLM deployment.\n' "$c_red" "$c_reset" "$NODE_ARCH" "$CPU_REQUEST" "$MEMORY_REQUEST"
   printf 'Set smaller requests only for smoke testing, for example CPU_REQUEST=1 MEMORY_REQUEST=4Gi, or add/free a larger %s node.\n\n' "$NODE_ARCH"
   return 2
 }

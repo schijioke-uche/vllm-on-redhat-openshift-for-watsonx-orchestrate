@@ -1,0 +1,16 @@
+Code ID: CPU-633679964-VLLM-OPENSHIFT
+Version: 10.3
+Generated: 2026-06-05T19:49:43Z
+Files:
+  BUNDLE_MANIFEST.txt
+  README.md
+  TEST_PROOF.md
+  V10.2_TO_V10.3.diff
+  amd64.Dockerfile
+  arm64.Dockerfile
+  deploy-vllm-openshift.sh
+  entrypoints/test_vllm_nonroot_entrypoint.sh
+  entrypoints/vllm-nonroot-entrypoint.sh
+  ppc64le.Dockerfile
+  s390x.Dockerfile
+  test-local.sh
