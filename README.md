@@ -20,6 +20,10 @@ GPU based models require NVIDIA GPU and NVIDIA Container Toolkit installed on th
 
 CPU based models ensure that the model supports CPU execution, which can be beneficial for environments without GPU resources. However, CPU based models may have slower performance compared to GPU based models, especially for larger language models. It is recommended to use CPU based models only if GPU resources are not available or if the model is specifically designed for CPU execution.
 
+## Deployment
+
+[Deployment on OpenShift](https://github.com/schijioke-uche/vllm-on-redhat-openshift-for-watsonx-orchestrate/blob/main/deploy/README.md)
+
 # vLLM CPU-Supported Model Reference
 
 > Production-ready model and CPU backend reference for repository integration.
