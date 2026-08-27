@@ -1,16 +1,16 @@
-# vLLM CPU on Red Hat OpenShift for IBM watsonx Orchestrate
+# vLLM on Red Hat OpenShift for IBM watsonx Orchestrate
 
 ## Deployment Overview
 
 This guide provides a step-by-step procedure for deploying the CPU-based vLLM asset from the `CPU/10.3` bundle in the `vllm-on-redhat-openshift-for-watsonx-orchestrate` repository.
 
-The deployment creates an OpenAI-compatible vLLM inference endpoint on Red Hat OpenShift that can be consumed by IBM watsonx Orchestrate running on IBM Software Hub / enterprise Cloud Pak for Data. The current CPU v10.3 bundle is a hardened release that preserves the production behavior of v10.2 while adding OpenShift-friendly non-root execution, writable cache/home paths, arbitrary UID handling, and Dockerfile syntax guards.
+The deployment creates an OpenAI-compatible vLLM inference endpoint on Red Hat OpenShift with CPU-based LLM that can be consumed by IBM watsonx Orchestrate running on IBM Software Hub / enterprise Cloud Pak for Data. The current CPU v10.3 bundle is a hardened release that preserves the production behavior of v10.2 while adding OpenShift-friendly non-root execution, writable cache/home paths, arbitrary UID handling, and Dockerfile syntax guards.
 
 Repository:
 
 `https://github.com/schijioke-uche/vllm-on-redhat-openshift-for-watsonx-orchestrate`
 
-Deployment bundle:
+Deployment bundle:  CPU Based LLM
 
 `CPU/10.3`
 
