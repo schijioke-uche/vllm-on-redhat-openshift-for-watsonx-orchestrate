@@ -102,7 +102,7 @@ This README summarizes the CPU-supported vLLM model reference extracted from the
 - Treat Apple Silicon and IBM Z / S390X support as experimental where noted by the source document.
 - Do not assume models absent from the table are validated for CPU deployment without a separate compatibility test.
 
-## Author and Contact
-Dr. Jeffrey Chijioke, PhD
-IBM Computer Scientist & IBM Quantum Ambassadors
+## Author
+> Dr. Jeffrey Chijioke, PhD
+> IBM Computer Scientist
 
