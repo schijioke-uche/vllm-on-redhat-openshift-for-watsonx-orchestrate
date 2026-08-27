@@ -103,6 +103,6 @@ This README summarizes the CPU-supported vLLM model reference extracted from the
 - Do not assume models absent from the table are validated for CPU deployment without a separate compatibility test.
 
 ## Author
-> Dr. Jeffrey Chijioke, PhD
+> Dr. Jeffrey Chijioke, PhD <br>
 > IBM Computer Scientist
 
