@@ -22,7 +22,7 @@ CPU based models ensure that the model supports CPU execution, which can be bene
 
 ## Deployment
 
-[Deployment on OpenShift](https://github.com/schijioke-uche/vllm-on-redhat-openshift-for-watsonx-orchestrate/blob/main/deploy/README.md)
+[Deployment Steps](https://github.com/schijioke-uche/vllm-on-redhat-openshift-for-watsonx-orchestrate/blob/main/deploy/README.md)
 
 # vLLM CPU-Supported Model Reference
 
