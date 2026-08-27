@@ -102,5 +102,5 @@ This README summarizes the CPU-supported vLLM model reference extracted from the
 
 ## Author and Contact
 Dr. Jeffrey Chijioke, PhD
-IBM Quantum Ambassador
+IBM Computer Scientist & IBM Quantum Ambassadors
 
