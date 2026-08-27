@@ -6,8 +6,6 @@ When IBM watsonx Orchestrate runs on IBM Software Hub in an enterprise Cloud Pak
 
 This architecture is especially valuable for enterprises that need hybrid performance, resilience, and governance. CPU and GPU vLLM endpoints can be operated together so that watsonx Orchestrate routes workloads according to model size, latency requirements, accelerator availability, cost, or business priority. For example, high-value production agents can target GPU-backed inference, while lower-priority or batch-oriented tasks use CPU-based models; health checks and routing logic can also provide fallback behavior if a preferred endpoint becomes unavailable. Running vLLM on Red Hat OpenShift further supports reproducible deployments, controlled upgrades, air-gapped or restricted-network operation, and integration with private registries and enterprise model repositories. The result is a scalable and governed AI serving layer that complements IBM watsonx Orchestrate on IBM Software Hub, giving customers greater control over model execution while preserving the automation, security, and lifecycle-management capabilities expected from an enterprise CPD platform.
 
-This guide provides instructions for deploying VLLM on Red Hat OpenShift and leverage that on watsonx Orchestrate. It covers the necessary steps to set up the environment, configure the deployment, and run VLLM on OpenShift.
-
 #### Prerequisites
 - A Red Hat OpenShift cluster with appropriate permissions to create resources.
 - OpenShift CLI (oc) installed and configured to access your cluster.
