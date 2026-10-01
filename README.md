@@ -1,4 +1,4 @@
-## VLLM Deployment on Red Hat OpenShift for watsonx Orchestrate
+## VLLM Deployment on Red Hat OpenShift AI for watsonx Orchestrate
 
 Deploying CPU- and GPU-based vLLM on enterprise Red Hat OpenShift provides IBM customers with a flexible, production-grade inference layer for serving large language models inside their own controlled infrastructure. GPU-backed vLLM deployments are well suited for high-throughput, low-latency generative AI workloads where accelerators such as NVIDIA GPUs are available, while CPU-based deployments provide a practical option for environments where GPUs are constrained, unavailable, or reserved for higher-priority workloads. On OpenShift, vLLM can be containerized and deployed as a scalable service with Kubernetes-native controls for scheduling, resource quotas, node affinity, health probes, autoscaling, secrets management, persistent model storage, and network policies. This allows enterprise teams to expose a standardized OpenAI-compatible inference endpoint while retaining control over model selection, infrastructure placement, security boundaries, and operational governance.
 
